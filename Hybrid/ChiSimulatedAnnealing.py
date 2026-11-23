@@ -1,17 +1,30 @@
 import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(ROOT, 'data')
+OUT_DIR = os.path.join(ROOT, 'outputs')
+os.makedirs(OUT_DIR, exist_ok=True)
+
+
+def resolve_input():
+    """CSV name (looked up in data/) or path from argv[1], else prompt. Last column = target."""
+    name = sys.argv[1] if len(sys.argv) > 1 else input("Provide the name of the csv file (in data/): ")
+    return name, (name if os.path.isabs(name) else os.path.join(DATA_DIR, name))
+
+
+
+import numpy as np
 import pandas as pd
 from sklearn.feature_selection import SelectKBest, chi2
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
-import numpy as np
 
-# Load CSV file
-data_folder = 'PSO-main/data'
-input_data = input("Provide the name of the csv file: ")
-file_path = os.path.join(data_folder, input_data)
+np.random.seed(42)
 
+input_data, file_path = resolve_input()
 data = pd.read_csv(file_path)
 
 # Split the dataset into features and target
@@ -21,7 +34,7 @@ y = data.iloc[:, -1]   # The last column (target)
 # Encode target variable if it's categorical
 if y.dtype == 'object':
     le = LabelEncoder()
-    y = le.fit_transform(y)
+    y = pd.Series(le.fit_transform(y), name=data.columns[-1])
 
 # Scale features to [0, 1] range
 scaler = MinMaxScaler()
@@ -31,18 +44,17 @@ X_scaled = scaler.fit_transform(X)
 chi2_selector = SelectKBest(chi2)
 chi2_selector.fit(X_scaled, y)
 
-# Get chi-squared scores and determine threshold
+# Select features with chi-squared scores above the mean score
 chi2_scores = chi2_selector.scores_
 threshold = np.mean(chi2_scores)
-
-# Select features with chi-squared scores above the threshold
 selected_features_chi2 = X.columns[chi2_scores > threshold]
-print("Chi-Squared Selected Features:\n", selected_features_chi2)
+print("Chi-Squared Selected Features:\n", list(selected_features_chi2))
 
 # Refit the scaler on the selected features
 X_selected = X[selected_features_chi2]
 scaler_selected = MinMaxScaler()
 X_selected_scaled = scaler_selected.fit_transform(X_selected)
+
 
 # Define the simulated annealing algorithm
 class SimulatedAnnealingFeatureSelection:
@@ -57,7 +69,10 @@ class SimulatedAnnealingFeatureSelection:
         self.n_features = X.shape[1]
 
     def objective_function(self, selected_features):
+        if not np.any(selected_features):  # an empty subset cannot be fitted
+            return 0.0
         X_subset = self.X[:, selected_features]
+        # NOTE: the subset is scored on this hold-out split, so the reported accuracy is optimistic
         X_train, X_test, y_train, y_test = train_test_split(X_subset, self.y, test_size=0.3, random_state=42)
         self.estimator.fit(X_train, y_train)
         y_pred = self.estimator.predict(X_test)
@@ -94,22 +109,22 @@ class SimulatedAnnealingFeatureSelection:
                     best_cost = new_cost
             temperature *= self.alpha
 
+        self.best_cost = best_cost
         return best_features
 
+
 # Apply simulated annealing on the subset of features selected by chi-squared
-sa_selector = SimulatedAnnealingFeatureSelection(LogisticRegression(), X_selected_scaled, y)
+sa_selector = SimulatedAnnealingFeatureSelection(LogisticRegression(max_iter=1000), X_selected_scaled, y)
 selected_features_sa = sa_selector.fit()
 
 final_selected_features = selected_features_chi2[selected_features_sa]
-print("Final Selected Features After Simulated Annealing:\n", final_selected_features)
+print("Final Selected Features After Simulated Annealing:\n", list(final_selected_features))
+print("Best hold-out accuracy seen during annealing: %.4f" % sa_selector.best_cost)
 
-# Create a new DataFrame with the selected features from the original data
 X_selected_final = X[final_selected_features]
 selected_data_final = pd.concat([X_selected_final, y], axis=1)
 
-# Generate new file name
-output_file_name = "ChiSimAnneal" + os.path.splitext(input_data)[0] + ".csv"
-output_file_path = os.path.join(data_folder, output_file_name)
+output_file_path = os.path.join(OUT_DIR, "ChiSimAnneal_" + os.path.basename(input_data))
 selected_data_final.to_csv(output_file_path, index=False)
 
 print("\nSelected features have been saved to:", output_file_path)

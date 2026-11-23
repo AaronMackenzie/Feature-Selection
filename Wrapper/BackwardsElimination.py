@@ -1,17 +1,25 @@
 import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(ROOT, 'data')
+OUT_DIR = os.path.join(ROOT, 'outputs')
+os.makedirs(OUT_DIR, exist_ok=True)
+
+
+def resolve_input():
+    """CSV name (looked up in data/) or path from argv[1], else prompt. Last column = target."""
+    name = sys.argv[1] if len(sys.argv) > 1 else input("Provide the name of the csv file (in data/): ")
+    return name, (name if os.path.isabs(name) else os.path.join(DATA_DIR, name))
+
+
+
 import pandas as pd
 from sklearn.feature_selection import SequentialFeatureSelector
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-# Define the data folder
-data_folder = 'PSO-main/data/'
-
-# Prompt user for the name of the CSV file
-input_data = input("Provide the name of the csv file: ")
-file_path = os.path.join(data_folder, input_data)
-
-# Read the CSV file into a DataFrame
+input_data, file_path = resolve_input()
 data = pd.read_csv(file_path)
 
 # Split the dataset into features and target
@@ -25,24 +33,17 @@ X_scaled = scaler.fit_transform(X)
 # Initialize the logistic regression model
 logreg = LogisticRegression(max_iter=1000)
 
-# Perform backward sequential feature selection
+# Backward sequential selection down to 5 features (5 is hard-coded in the original script)
 selector = SequentialFeatureSelector(logreg, n_features_to_select=5, direction='backward', scoring='accuracy')
 selector.fit(X_scaled, y)
 
-# Get the selected features
 selected_features = selector.get_support()
 print("Selected features: ", list(X.columns[selected_features]))
 
-# Create a new DataFrame with the selected features
 X_selected = X.loc[:, selected_features]
 selected_data = pd.concat([X_selected, y], axis=1)
 
-# Ensure the output directory exists
-output_directory = os.path.join(data_folder, 'BackwardsElimination')
-os.makedirs(output_directory, exist_ok=True)
-
-# Save the selected features to a new CSV file
-output_file_path = os.path.join(output_directory, 'BE_' + input_data)
+output_file_path = os.path.join(OUT_DIR, 'BE_' + os.path.basename(input_data))
 selected_data.to_csv(output_file_path, index=False)
 
 print("\nSelected features have been saved to:", output_file_path)

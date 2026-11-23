@@ -1,12 +1,23 @@
 import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(ROOT, 'data')
+OUT_DIR = os.path.join(ROOT, 'outputs')
+os.makedirs(OUT_DIR, exist_ok=True)
+
+
+def resolve_input():
+    """CSV name (looked up in data/) or path from argv[1], else prompt. Last column = target."""
+    name = sys.argv[1] if len(sys.argv) > 1 else input("Provide the name of the csv file (in data/): ")
+    return name, (name if os.path.isabs(name) else os.path.join(DATA_DIR, name))
+
+
 import pandas as pd
 from sklearn.feature_selection import mutual_info_classif
 from sklearn.preprocessing import MinMaxScaler
 
-data_folder = 'PSO-main/data'
-input_data = input("Provide the name of the csv file: ")
-file_path = os.path.join(data_folder, input_data)
-
+input_data, file_path = resolve_input()
 data = pd.read_csv(file_path)
 
 # Split the dataset into features and target
@@ -17,26 +28,23 @@ y = data.iloc[:, -1]   # The last column (target)
 scaler = MinMaxScaler()
 X_scaled = scaler.fit_transform(X)
 
-# Perform mutual information feature selection on scaled data
-mi_scores = mutual_info_classif(X_scaled, y)
+# Mutual information (random_state fixed: the estimator adds small random noise)
+mi_scores = mutual_info_classif(X_scaled, y, random_state=42)
 mi_scores_series = pd.Series(mi_scores, index=X.columns)
 mi_scores_sorted = mi_scores_series.sort_values(ascending=False)
 
 print("Mutual Information Scores:\n", mi_scores_sorted)
 
-# Automatically select features based on a threshold (e.g., mean score)
+# Select features above the mean score
 threshold = mi_scores_sorted.mean()
 selected_features = mi_scores_sorted[mi_scores_sorted > threshold].index
 
 print("\nSelected Features Based on Threshold:\n", list(selected_features))
 
-# Create a new DataFrame with the selected features from the original data
 X_selected = X[selected_features]
 selected_data = pd.concat([X_selected, y], axis=1)
 
-# Save the selected features to a new CSV file
-output_file_name = "InfoGain" + os.path.splitext(input_data)[0] + ".csv"
-output_file_path = os.path.join(data_folder, output_file_name)
+output_file_path = os.path.join(OUT_DIR, "InfoGain_" + os.path.basename(input_data))
 selected_data.to_csv(output_file_path, index=False)
 
 print("\nSelected features have been saved to:", output_file_path)
